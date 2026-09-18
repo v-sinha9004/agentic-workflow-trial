@@ -1,0 +1,10 @@
+[project]
+name = "agentic-workflow-trial"
+version = "0.1.0"
+description = "Educational Agentic Workflow with OpenAI and Tools"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
