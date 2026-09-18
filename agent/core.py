@@ -4,7 +4,7 @@ Implements the Plan-and-Execute (ReAct) loop using OpenAI Function Calling.
 Maintains working memory, executes tools, logs steps, and synthesizes answers.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from .config import Config, load_config
 from .llm_client import OpenAIClient, ToolCall
 from .tools import ToolRegistry, registry as default_registry
@@ -25,7 +25,7 @@ class Colors:
 
 DEFAULT_SYSTEM_PROMPT = """You are an intelligent, proactive Travel & Flight Assistant powered by an agentic workflow.
 
-Your goal is to help users find flights, check baggage policies, calculate total trip costs, and provide destination advice.
+Your goal is to help users find flights, check baggage policies, calculate total trip costs, book confirmed flights, and provide destination advice.
 
 Guidelines for Planning and Tool Use:
 1. Always plan your actions step-by-step.
@@ -33,7 +33,12 @@ Guidelines for Planning and Tool Use:
 3. Always verify airline baggage rules and fees using 'get_baggage_policy' when passengers or luggage are involved.
 4. Always use 'calculator' to compute accurate total costs (tickets + baggage + passengers). Never guess math.
 5. If the user mentions travel dates or asks for recommendations, check destination weather with 'get_city_weather'.
-6. Present your final answer in a clear, well-structured, and helpful format.
+6. HUMAN-IN-THE-LOOP VERIFICATION FOR FLIGHT BOOKINGS:
+   - When presenting flight options, ALWAYS show the flight details, airline, schedule, and complete cost breakdown first.
+   - NEVER call 'book_flight' without explicit user confirmation.
+   - After displaying the flight details, explicitly ask the user for confirmation (e.g. "Would you like me to book this flight? Please reply 'yes book' to confirm.").
+   - Only call 'book_flight' once the user explicitly confirms (e.g. "yes book", "yes, book it", or explicitly instructs to book).
+7. Present your final answer in a clear, well-structured, and helpful format.
 """
 
 
@@ -50,6 +55,7 @@ class Agent:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         config: Optional[Config] = None,
         verbose: bool = True,
+        confirmation_callback: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
     ):
         self.config = config or load_config(model_override=model)
         self.client = OpenAIClient(
@@ -60,6 +66,7 @@ class Agent:
         self.registry = tool_registry or default_registry
         self.system_prompt = system_prompt
         self.verbose = verbose
+        self.confirmation_callback = confirmation_callback
         self.messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt}
         ]
@@ -126,6 +133,15 @@ class Agent:
                     tool_obj = self.registry.get(tc.name)
                     if not tool_obj:
                         observation = f"Error: Tool '{tc.name}' is not registered."
+                    elif tool_obj.requires_confirmation and self.confirmation_callback:
+                        # Human-in-the-loop verification check
+                        if not self.confirmation_callback(tc.name, tc.arguments):
+                            observation = (
+                                f"Action cancelled: Human verification declined for tool '{tc.name}' "
+                                f"with arguments {tc.arguments}."
+                            )
+                        else:
+                            observation = tool_obj.execute(**tc.arguments)
                     else:
                         observation = tool_obj.execute(**tc.arguments)
 

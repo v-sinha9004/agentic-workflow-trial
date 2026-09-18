@@ -27,7 +27,94 @@ class TestAgentDryRun(unittest.TestCase):
         self.assertEqual(agent.config.model, "gpt-4o-mini")
         self.assertEqual(len(agent.messages), 1)
         self.assertEqual(agent.messages[0]["role"], "system")
+        self.assertIn("HUMAN-IN-THE-LOOP VERIFICATION", agent.system_prompt)
+
+    def test_agent_with_confirmation_callback(self):
+        cb_called = []
+
+        def my_cb(tool_name, args):
+            cb_called.append((tool_name, args))
+            return True
+
+        agent = Agent(model="gpt-4o-mini", confirmation_callback=my_cb)
+        self.assertIsNotNone(agent.confirmation_callback)
+
+    def test_confirmation_callback_declined(self):
+        from agent.llm_client import LLMResponse, ToolCall
+
+        agent = Agent(
+            model="gpt-4o-mini",
+            confirmation_callback=lambda name, args: False,
+        )
+
+        class MockClientReject:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, tools=None, temperature=0.2):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[
+                            ToolCall(
+                                id="call_1",
+                                name="book_flight",
+                                arguments={"flight_number": "BA 178"},
+                                raw_arguments='{"flight_number": "BA 178"}',
+                            )
+                        ],
+                    )
+                return LLMResponse(content="Booking was cancelled as requested.")
+
+        agent.client = MockClientReject()
+        ans = agent.run("book it", max_steps=2)
+        tool_obs = [m for m in agent.messages if m.get("role") == "tool"]
+        self.assertEqual(len(tool_obs), 1)
+        self.assertIn("Action cancelled: Human verification declined", tool_obs[0]["content"])
+        self.assertEqual(ans, "Booking was cancelled as requested.")
+
+    def test_confirmation_callback_approved(self):
+        from agent.llm_client import LLMResponse, ToolCall
+
+        agent = Agent(
+            model="gpt-4o-mini",
+            confirmation_callback=lambda name, args: True,
+        )
+
+        class MockClientApprove:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, tools=None, temperature=0.2):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[
+                            ToolCall(
+                                id="call_2",
+                                name="book_flight",
+                                arguments={
+                                    "flight_number": "BA 178",
+                                    "passenger_name": "Alice Smith",
+                                    "date": "2026-09-25",
+                                },
+                                raw_arguments="{}",
+                            )
+                        ],
+                    )
+                return LLMResponse(content="Flight booked successfully!")
+
+        agent.client = MockClientApprove()
+        ans = agent.run("yes book", max_steps=2)
+        tool_obs = [m for m in agent.messages if m.get("role") == "tool"]
+        self.assertEqual(len(tool_obs), 1)
+        self.assertIn("CONFIRMED", tool_obs[0]["content"])
+        self.assertIn("BK-BA178-", tool_obs[0]["content"])
+        self.assertEqual(ans, "Flight booked successfully!")
 
 
 if __name__ == "__main__":
     unittest.main()
+

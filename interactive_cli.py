@@ -18,7 +18,7 @@ def main():
     print("\n" + "=" * 60)
     print(" 🤖 INTERACTIVE AGENTIC WORKFLOW CLI")
     print("=" * 60)
-    print("Type your request or 'help' for commands. Type 'quit' to exit.\n")
+    print("Type your request or 'help' for commands. Tip: Confirm flight bookings with 'yes book'. Type 'quit' to exit.\n")
 
     agent = Agent()
 

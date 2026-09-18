@@ -17,6 +17,7 @@ class Tool:
     description: str
     func: Callable[..., Any]
     schema: Dict[str, Any]
+    requires_confirmation: bool = False
 
     def execute(self, **kwargs) -> str:
         """Executes the underlying function with provided arguments, handling errors gracefully."""
@@ -35,7 +36,13 @@ class ToolRegistry:
     def __init__(self):
         self._tools: Dict[str, Tool] = {}
 
-    def register(self, func: Callable[..., Any], name: Optional[str] = None, description: Optional[str] = None) -> Tool:
+    def register(
+        self,
+        func: Callable[..., Any],
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        requires_confirmation: bool = False,
+    ) -> Tool:
         # Check explicit arguments first, then function attributes attached by decorator, then reflection
         tool_name = name or getattr(func, "_tool_name", None) or func.__name__
         docstring = inspect.getdoc(func) or ""
@@ -44,9 +51,16 @@ class ToolRegistry:
             or getattr(func, "_tool_description", None)
             or (docstring.split("\n\n")[0] if docstring else f"Function {tool_name}")
         )
+        req_conf = requires_confirmation or getattr(func, "_requires_confirmation", False)
 
         schema = self._generate_openai_schema(func, tool_name, tool_description, docstring)
-        tool_obj = Tool(name=tool_name, description=tool_description, func=func, schema=schema)
+        tool_obj = Tool(
+            name=tool_name,
+            description=tool_description,
+            func=func,
+            schema=schema,
+            requires_confirmation=req_conf,
+        )
         self._tools[tool_name] = tool_obj
         return tool_obj
 
@@ -118,13 +132,19 @@ class ToolRegistry:
 registry = ToolRegistry()
 
 
-def tool(name: Optional[str] = None, description: Optional[str] = None, target_registry: Optional[ToolRegistry] = None):
+def tool(
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    target_registry: Optional[ToolRegistry] = None,
+    requires_confirmation: bool = False,
+):
     """Decorator to register a function as an agent tool."""
     def decorator(func: Callable):
         func._tool_name = name or func.__name__
         func._tool_description = description
+        func._requires_confirmation = requires_confirmation
         reg = target_registry or registry
-        reg.register(func, name=name, description=description)
+        reg.register(func, name=name, description=description, requires_confirmation=requires_confirmation)
         return func
     return decorator
 
@@ -345,3 +365,44 @@ def get_city_weather(city: str, date: str = "") -> str:
             return json.dumps(res, indent=2)
 
     return f"Weather data currently unavailable for '{city}'. General recommendation: check local forecast before departure."
+
+
+# =====================================================================
+# In-Memory Booking Storage & Human-in-the-Loop Booking Tool
+# =====================================================================
+
+_MOCK_BOOKINGS: List[Dict[str, Any]] = []
+
+
+@tool(
+    name="book_flight",
+    description="Book a confirmed flight ticket after user verification. Requires flight_number, passenger_name, and travel date.",
+    requires_confirmation=True,
+)
+def book_flight(flight_number: str, passenger_name: str = "Passenger", date: str = "") -> str:
+    """
+    Book a confirmed flight ticket and generate a booking reservation reference.
+    :param flight_number: Flight code to book (e.g. 'BA 178', 'VS 004', 'DL 001')
+    :param passenger_name: Name of passenger or passengers
+    :param date: Flight travel date (e.g. '2026-09-25')
+    """
+    clean_num = flight_number.strip().upper()
+    flight = next((f for f in _MOCK_FLIGHTS if f["flight_number"].upper() == clean_num), None)
+
+    ref_suffix = abs(hash(f"{clean_num}-{passenger_name}-{date}")) % 90000 + 10000
+    booking_ref = f"BK-{clean_num.replace(' ', '')}-{ref_suffix}"
+
+    booking_record = {
+        "status": "CONFIRMED",
+        "booking_reference": booking_ref,
+        "flight_number": clean_num,
+        "airline": flight["airline"] if flight else "Partner Airline",
+        "route": f"{flight['origin']} -> {flight['destination']}" if flight else "Confirmed Route",
+        "passenger_name": passenger_name,
+        "date": date or "Confirmed Date",
+        "price_paid": flight["price"] if flight else "Standard Fare",
+        "message": f"Successfully booked flight {clean_num} for {passenger_name}. Booking reference: {booking_ref}.",
+    }
+    _MOCK_BOOKINGS.append(booking_record)
+    return json.dumps(booking_record, indent=2)
+

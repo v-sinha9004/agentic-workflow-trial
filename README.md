@@ -42,7 +42,8 @@ agentic-workflow-trial/
 │   └── core.py             # Agent class running the ReAct loop
 ├── examples/
 │   ├── example_flight_search.py   # Flight search + baggage fare calculation
-│   └── example_trip_planner.py    # Multi-step: flights + baggage + weather advice
+│   ├── example_trip_planner.py    # Multi-step: flights + baggage + weather advice
+│   └── example_human_in_loop.py   # Human-in-the-Loop verification & booking
 ├── tests/
 │   ├── test_tools.py       # Unit tests for schemas and tool execution
 │   └── test_agent_dry_run.py # Unit tests for configuration and agent setup
@@ -95,6 +96,13 @@ uv run example_trip_planner.py
 python3 example_trip_planner.py
 ```
 
+#### Example 3: Human-in-the-Loop Flight Verification & Booking
+```bash
+uv run example_human_in_loop.py
+# or with active venv:
+python3 example_human_in_loop.py
+```
+
 #### Interactive Terminal Chat
 Chat with your travel agent live and watch it plan and call tools in real-time:
 ```bash
@@ -113,6 +121,7 @@ python3 interactive_cli.py
 | `get_baggage_policy` | Look up carry-on allowance and checked bag fees per carrier | `airline` |
 | `calculator` | Safely evaluate mathematical expressions for fares, fees, and taxes | `expression` |
 | `get_city_weather` | Check current conditions and travel packing recommendations | `city`, `date` |
+| `book_flight` | Book confirmed flight tickets once human verification is provided | `flight_number`, `passenger_name`, `date` |
 
 ---
 
