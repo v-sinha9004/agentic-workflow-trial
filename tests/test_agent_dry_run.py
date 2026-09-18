@@ -45,6 +45,7 @@ class TestAgentDryRun(unittest.TestCase):
         agent = Agent(
             model="gpt-4o-mini",
             confirmation_callback=lambda name, args: False,
+            enable_dag=False,
         )
 
         class MockClientReject:
@@ -80,6 +81,7 @@ class TestAgentDryRun(unittest.TestCase):
         agent = Agent(
             model="gpt-4o-mini",
             confirmation_callback=lambda name, args: True,
+            enable_dag=False,
         )
 
         class MockClientApprove:
@@ -113,6 +115,40 @@ class TestAgentDryRun(unittest.TestCase):
         self.assertIn("CONFIRMED", tool_obs[0]["content"])
         self.assertIn("BK-BA178-", tool_obs[0]["content"])
         self.assertEqual(ans, "Flight booked successfully!")
+
+    def test_agent_dag_blocks_premature_booking(self):
+        from agent.llm_client import LLMResponse, ToolCall
+
+        # By default enable_dag is True, with prerequisites ['search_flights', 'calculator']
+        agent = Agent(model="gpt-4o-mini", enable_dag=True)
+
+        class MockClientPrematureBook:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, tools=None, temperature=0.2):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[
+                            ToolCall(
+                                id="call_premature",
+                                name="book_flight",
+                                arguments={"flight_number": "BA 178"},
+                                raw_arguments='{"flight_number": "BA 178"}',
+                            )
+                        ],
+                    )
+                return LLMResponse(content="I cannot book yet.")
+
+        agent.client = MockClientPrematureBook()
+        agent.run("Book flight immediately", max_steps=2)
+        tool_obs = [m for m in agent.messages if m.get("role") == "tool"]
+        self.assertEqual(len(tool_obs), 1)
+        self.assertIn("DAG Guardrail Rejection", tool_obs[0]["content"])
+        self.assertIn("calculator", tool_obs[0]["content"])
+        self.assertIn("search_flights", tool_obs[0]["content"])
 
 
 if __name__ == "__main__":

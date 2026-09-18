@@ -10,7 +10,8 @@ from agent import Agent, registry
 def print_help():
     print("\nCommands:")
     print("  tools      - List all registered tools and descriptions")
-    print("  reset      - Clear agent memory")
+    print("  dag        - Show current Workflow DAG status and dependencies")
+    print("  reset      - Clear agent memory and reset workflow DAG")
     print("  quit/exit  - Exit interactive mode")
     print("  help       - Show this message\n")
 
@@ -42,9 +43,16 @@ def main():
                     print(f" • \033[1m{t.name}\033[0m: {t.description}")
                 continue
 
+            if user_input.lower() in ("dag", "status"):
+                if agent.dag:
+                    print(agent.dag.render_ascii())
+                else:
+                    print("\nNo DAG configured for this agent.")
+                continue
+
             if user_input.lower() == "reset":
                 agent.reset()
-                print("Agent memory reset.")
+                print("Agent memory and workflow DAG reset.")
                 continue
 
             agent.run(user_input)

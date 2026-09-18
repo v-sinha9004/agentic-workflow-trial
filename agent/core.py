@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 from .config import Config, load_config
 from .llm_client import OpenAIClient, ToolCall
 from .tools import ToolRegistry, registry as default_registry
+from .dag import WorkflowDAG, create_flight_booking_dag
 
 
 # Terminal color formatting for clear educational visualization
@@ -28,7 +29,11 @@ DEFAULT_SYSTEM_PROMPT = """You are an intelligent, proactive Travel & Flight Ass
 Your goal is to help users find flights, check baggage policies, calculate total trip costs, book confirmed flights, and provide destination advice.
 
 Guidelines for Planning and Tool Use:
-1. Always plan your actions step-by-step.
+1. Always plan your actions step-by-step following the Workflow DAG dependencies:
+   - Step 1: 'search_flights' -> Search for flights and airline options.
+   - Step 2: 'get_baggage_policy' & 'calculator' -> Verify baggage rules and calculate total cost.
+   - Step 3: Human Verification -> Present flight details, baggage fees, and total cost to the user.
+   - Step 4: 'book_flight' -> Book only AFTER flight search and cost calculation are completed, AND user explicitly confirms.
 2. When a user asks about flights, search for options using 'search_flights'.
 3. Always verify airline baggage rules and fees using 'get_baggage_policy' when passengers or luggage are involved.
 4. Always use 'calculator' to compute accurate total costs (tickets + baggage + passengers). Never guess math.
@@ -46,6 +51,7 @@ class Agent:
     """
     ReAct Agent orchestrator.
     Manages the Thought -> Action -> Observation cycle until task completion.
+    Enforces step dependencies via a Directed Acyclic Graph (DAG).
     """
 
     def __init__(
@@ -56,6 +62,8 @@ class Agent:
         config: Optional[Config] = None,
         verbose: bool = True,
         confirmation_callback: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        dag: Optional[WorkflowDAG] = None,
+        enable_dag: bool = True,
     ):
         self.config = config or load_config(model_override=model)
         self.client = OpenAIClient(
@@ -67,13 +75,17 @@ class Agent:
         self.system_prompt = system_prompt
         self.verbose = verbose
         self.confirmation_callback = confirmation_callback
+        self.enable_dag = enable_dag
+        self.dag = (dag if dag is not None else create_flight_booking_dag()) if enable_dag else None
         self.messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt}
         ]
 
     def reset(self):
-        """Clears working memory while keeping the system prompt."""
+        """Clears working memory while keeping the system prompt, and resets the DAG."""
         self.messages = [{"role": "system", "content": self.system_prompt}]
+        if self.dag:
+            self.dag.reset()
 
     def run(self, user_prompt: str, max_steps: int = 10) -> str:
         """
@@ -133,6 +145,16 @@ class Agent:
                     tool_obj = self.registry.get(tc.name)
                     if not tool_obj:
                         observation = f"Error: Tool '{tc.name}' is not registered."
+                    elif self.dag and not self.dag.can_execute(tc.name)[0]:
+                        # DAG step dependency check failed
+                        _, unmet_deps = self.dag.can_execute(tc.name)
+                        observation = (
+                            f"DAG Guardrail Rejection: Tool '{tc.name}' cannot be executed yet because "
+                            f"its prerequisite steps are not completed. Unmet dependencies: {unmet_deps}. "
+                            f"Please execute the prerequisite steps first."
+                        )
+                        if self.verbose:
+                            print(f"{Colors.RED}🚫 DAG Blocked:{Colors.RESET} {tc.name} requires {unmet_deps}")
                     elif tool_obj.requires_confirmation and self.confirmation_callback:
                         # Human-in-the-loop verification check
                         if not self.confirmation_callback(tc.name, tc.arguments):
@@ -142,8 +164,12 @@ class Agent:
                             )
                         else:
                             observation = tool_obj.execute(**tc.arguments)
+                            if self.dag and not observation.startswith("Error"):
+                                self.dag.mark_completed(tc.name, observation)
                     else:
                         observation = tool_obj.execute(**tc.arguments)
+                        if self.dag and not observation.startswith("Error"):
+                            self.dag.mark_completed(tc.name, observation)
 
                     if self.verbose:
                         # Print truncated preview if observation is very long

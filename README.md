@@ -28,6 +28,14 @@ flowchart TD
 3. **Observe (Observation)**: The environment executes the Python function and feeds the real data back to the LLM.
 4. **Iterate**: The LLM inspects the observation and either calls another tool (e.g. `get_baggage_policy` or `calculator`) or synthesizes the final answer.
 
+### 🛡️ Step Ordering with Directed Acyclic Graphs (DAG):
+While the ReAct loop allows flexible reasoning, critical real-world operations (like booking tickets or charging credit cards) must not occur prematurely.
+The built-in `WorkflowDAG` defines strict prerequisite dependencies:
+```
+search_flights ──► get_baggage_policy ──► calculator ──► [Human Confirmation] ──► book_flight
+```
+If an LLM attempts to call `book_flight` before `search_flights` or `calculator` have completed, the DAG guardrail intercepts and blocks the call, preserving deterministic ordering.
+
 ---
 
 ## 🗂️ Project Structure
@@ -38,14 +46,17 @@ agentic-workflow-trial/
 │   ├── __init__.py         # Package exports
 │   ├── config.py           # Configuration loader (.env, OPENAI_API_KEY, model)
 │   ├── tools.py            # ToolRegistry, @tool decorator, flight/travel tools
+│   ├── dag.py              # WorkflowDAG: step dependency and cycle management
 │   ├── llm_client.py       # Direct OpenAI API client with function calling
-│   └── core.py             # Agent class running the ReAct loop
+│   └── core.py             # Agent class running the ReAct loop with DAG guard
 ├── examples/
 │   ├── example_flight_search.py   # Flight search + baggage fare calculation
 │   ├── example_trip_planner.py    # Multi-step: flights + baggage + weather advice
-│   └── example_human_in_loop.py   # Human-in-the-Loop verification & booking
+│   ├── example_human_in_loop.py   # Human-in-the-Loop verification & booking
+│   └── example_dag_workflow.py    # DAG dependency order enforcement
 ├── tests/
 │   ├── test_tools.py       # Unit tests for schemas and tool execution
+│   ├── test_dag.py         # Unit tests for Workflow DAG & cycle detection
 │   └── test_agent_dry_run.py # Unit tests for configuration and agent setup
 ├── interactive_cli.py      # Real-time interactive terminal chat with agent
 ├── .env.example            # Environment template
@@ -103,8 +114,15 @@ uv run example_human_in_loop.py
 python3 example_human_in_loop.py
 ```
 
+#### Example 4: Workflow DAG Step Order Enforcement
+```bash
+uv run example_dag_workflow.py
+# or with active venv:
+python3 example_dag_workflow.py
+```
+
 #### Interactive Terminal Chat
-Chat with your travel agent live and watch it plan and call tools in real-time:
+Chat with your travel agent live and watch it plan and call tools in real-time. Type `dag` to see current graph progress:
 ```bash
 uv run interactive_cli.py
 # or with active venv:
