@@ -8,6 +8,7 @@ from .tools import tool, registry
 from .llm_client import OpenAIClient
 from .core import Agent
 from .dag import WorkflowDAG, WorkflowNode, DAGCycleError, create_flight_booking_dag
+from .memory import ShortTermMemory
 
 __all__ = [
     "Config",
@@ -20,4 +21,6 @@ __all__ = [
     "WorkflowNode",
     "DAGCycleError",
     "create_flight_booking_dag",
+    "ShortTermMemory",
 ]
+

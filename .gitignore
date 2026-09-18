@@ -78,3 +78,5 @@ Thumbs.db
 *.log
 *.sqlite3
 *.db
+session_memory.json
+

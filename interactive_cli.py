@@ -9,9 +9,12 @@ from agent import Agent, registry
 
 def print_help():
     print("\nCommands:")
+    print("  memory     - Inspect short-term working memory and sliding window buffer")
+    print("  notes      - View active scratchpad notes/facts stored in memory")
+    print("  set_var <k> <v> - Manually add/update a fact in working memory")
     print("  tools      - List all registered tools and descriptions")
     print("  dag        - Show current Workflow DAG status and dependencies")
-    print("  reset      - Clear agent memory and reset workflow DAG")
+    print("  reset      - Clear agent memory, session JSON file, and reset workflow DAG")
     print("  quit/exit  - Exit interactive mode")
     print("  help       - Show this message\n")
 
@@ -19,7 +22,8 @@ def main():
     print("\n" + "=" * 60)
     print(" 🤖 INTERACTIVE AGENTIC WORKFLOW CLI")
     print("=" * 60)
-    print("Type your request or 'help' for commands. Tip: Confirm flight bookings with 'yes book'. Type 'quit' to exit.\n")
+    print("Type your request or 'help' for commands. Tip: Confirm flight bookings with 'yes book'. Type 'quit' to exit.")
+    print("💾 Short-term memory is active and live-saved to 'session_memory.json'.\n")
 
     agent = Agent()
 
@@ -37,6 +41,30 @@ def main():
                 print_help()
                 continue
 
+            if user_input.lower() in ("memory", "mem"):
+                print("\n" + agent.memory.render_ascii())
+                continue
+
+            if user_input.lower() == "notes":
+                notes = agent.memory.get_all_notes()
+                print("\nActive Working Scratchpad Notes:")
+                if not notes:
+                    print("  (None stored yet)")
+                else:
+                    for k, v in notes.items():
+                        print(f"  • \033[1m{k}\033[0m: {v}")
+                continue
+
+            if user_input.lower().startswith("set_var "):
+                parts = user_input[8:].strip().split(" ", 1)
+                if len(parts) == 2:
+                    k, v = parts
+                    agent.memory.set_note(k.strip(), v.strip())
+                    print(f"Saved to working memory: {k.strip()} = '{v.strip()}'")
+                else:
+                    print("Usage: set_var <key> <value>")
+                continue
+
             if user_input.lower() == "tools":
                 print("\nRegistered Tools:")
                 for t in registry.list_tools():
@@ -52,7 +80,7 @@ def main():
 
             if user_input.lower() == "reset":
                 agent.reset()
-                print("Agent memory and workflow DAG reset.")
+                print("Agent memory, session file, and workflow DAG reset.")
                 continue
 
             agent.run(user_input)

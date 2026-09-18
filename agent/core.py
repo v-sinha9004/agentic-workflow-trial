@@ -7,8 +7,9 @@ Maintains working memory, executes tools, logs steps, and synthesizes answers.
 from typing import Any, Callable, Dict, List, Optional
 from .config import Config, load_config
 from .llm_client import OpenAIClient, ToolCall
-from .tools import ToolRegistry, registry as default_registry
+from .tools import ToolRegistry, registry as default_registry, set_active_memory
 from .dag import WorkflowDAG, create_flight_booking_dag
+from .memory import ShortTermMemory
 
 
 # Terminal color formatting for clear educational visualization
@@ -38,12 +39,15 @@ Guidelines for Planning and Tool Use:
 3. Always verify airline baggage rules and fees using 'get_baggage_policy' when passengers or luggage are involved.
 4. Always use 'calculator' to compute accurate total costs (tickets + baggage + passengers). Never guess math.
 5. If the user mentions travel dates or asks for recommendations, check destination weather with 'get_city_weather'.
-6. HUMAN-IN-THE-LOOP VERIFICATION FOR FLIGHT BOOKINGS:
+6. SHORT-TERM MEMORY & WORKING NOTES:
+   - When the user shares important personal details, travel preferences, or constraints (e.g. passenger name, destination, preferred airline, budget, baggage count), save them to working memory using 'save_memory_note'.
+   - Use stored working memory facts to personalize responses and avoid repeatedly asking the user for information they already provided.
+7. HUMAN-IN-THE-LOOP VERIFICATION FOR FLIGHT BOOKINGS:
    - When presenting flight options, ALWAYS show the flight details, airline, schedule, and complete cost breakdown first.
    - NEVER call 'book_flight' without explicit user confirmation.
    - After displaying the flight details, explicitly ask the user for confirmation (e.g. "Would you like me to book this flight? Please reply 'yes book' to confirm.").
    - Only call 'book_flight' once the user explicitly confirms (e.g. "yes book", "yes, book it", or explicitly instructs to book).
-7. Present your final answer in a clear, well-structured, and helpful format.
+8. Present your final answer in a clear, well-structured, and helpful format.
 """
 
 
@@ -64,6 +68,10 @@ class Agent:
         confirmation_callback: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
         dag: Optional[WorkflowDAG] = None,
         enable_dag: bool = True,
+        memory: Optional[ShortTermMemory] = None,
+        max_memory_messages: int = 20,
+        memory_storage_path: Optional[str] = "session_memory.json",
+        load_existing_memory: bool = False,
     ):
         self.config = config or load_config(model_override=model)
         self.client = OpenAIClient(
@@ -77,13 +85,30 @@ class Agent:
         self.confirmation_callback = confirmation_callback
         self.enable_dag = enable_dag
         self.dag = (dag if dag is not None else create_flight_booking_dag()) if enable_dag else None
-        self.messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt}
-        ]
+        self.memory = memory or ShortTermMemory(
+            max_messages=max_memory_messages,
+            storage_path=memory_storage_path,
+            load_existing=load_existing_memory,
+        )
+        set_active_memory(self.memory)
+
+    @property
+    def messages(self) -> List[Dict[str, Any]]:
+        """Active dialogue context with dynamically formatted system prompt including working notes."""
+        system_msg = {
+            "role": "system",
+            "content": self.memory.format_system_context(self.system_prompt),
+        }
+        return [system_msg] + self.memory.messages
+
+    @messages.setter
+    def messages(self, msgs: List[Dict[str, Any]]):
+        """Allows direct message assignment for test mocking and backward compatibility."""
+        self.memory.messages = [m for m in msgs if m.get("role") != "system"]
 
     def reset(self):
         """Clears working memory while keeping the system prompt, and resets the DAG."""
-        self.messages = [{"role": "system", "content": self.system_prompt}]
+        self.memory.clear()
         if self.dag:
             self.dag.reset()
 
@@ -95,8 +120,10 @@ class Agent:
           2. If LLM requests tool execution: execute tools and append observations
           3. Repeat until LLM generates final answer or max_steps reached.
         """
-        # Append user prompt to conversation history
-        self.messages.append({"role": "user", "content": user_prompt})
+        set_active_memory(self.memory)
+
+        # Append user prompt to working memory
+        self.memory.add_user_message(user_prompt)
 
         if self.verbose:
             print(f"\n{Colors.BOLD}{Colors.HEADER}======================================================={Colors.RESET}")
@@ -116,23 +143,22 @@ class Agent:
 
             # Case 1: The model decided to invoke one or more tools
             if response.tool_calls:
-                # Format and record the assistant's message containing tool_calls in history
-                assistant_msg: Dict[str, Any] = {
-                    "role": "assistant",
-                    "content": response.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": tc.raw_arguments,
-                            },
-                        }
-                        for tc in response.tool_calls
-                    ],
-                }
-                self.messages.append(assistant_msg)
+                # Format and record the assistant's message containing tool_calls in memory
+                assistant_tool_calls = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.raw_arguments,
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
+                self.memory.add_assistant_message(
+                    content=response.content,
+                    tool_calls=assistant_tool_calls,
+                )
 
                 if self.verbose and response.content:
                     print(f"{Colors.DIM}Thought: {response.content}{Colors.RESET}")
@@ -177,18 +203,18 @@ class Agent:
                         print(f"{Colors.YELLOW}👁️  Observation:{Colors.RESET} {obs_preview}\n")
 
                     # Append observation as a tool role message in memory
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": observation,
-                    })
+                    self.memory.add_tool_message(
+                        tool_call_id=tc.id,
+                        content=observation,
+                        name=tc.name,
+                    )
 
                 # Loop back to let the LLM observe results and decide the next step
                 continue
 
             # Case 2: The model produced a final answer without requesting more tools
             final_answer = response.content or ""
-            self.messages.append({"role": "assistant", "content": final_answer})
+            self.memory.add_assistant_message(content=final_answer)
 
             if self.verbose:
                 print(f"{Colors.BOLD}{Colors.GREEN}======================================================={Colors.RESET}")
@@ -199,6 +225,7 @@ class Agent:
             return final_answer
 
         fallback_msg = f"Agent reached maximum allowed steps ({max_steps}) before concluding."
+        self.memory.add_assistant_message(content=fallback_msg)
         if self.verbose:
             print(f"{Colors.RED}{fallback_msg}{Colors.RESET}")
         return fallback_msg

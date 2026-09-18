@@ -36,6 +36,12 @@ search_flights ──► get_baggage_policy ──► calculator ──► [Huma
 ```
 If an LLM attempts to call `book_flight` before `search_flights` or `calculator` have completed, the DAG guardrail intercepts and blocks the call, preserving deterministic ordering.
 
+### 🧠 Short-Term Working Memory & Scratchpad:
+Agents need memory to maintain multi-turn dialogue context without exceeding model context limits:
+1. **Dialogue Buffer (Sliding Window)**: Automatically tracks the conversation stream while pruning older turns beyond capacity (`max_messages`), ensuring tool-call atomicity.
+2. **Working Scratchpad (Key Facts)**: A dedicated key-value store where the agent uses `save_memory_note` to record vital facts (e.g., `user_name`, `preferred_airline`, `budget`). These facts are pinned into the prompt and survive even when older dialogue turns are evicted.
+3. **Session Persistence (`session_memory.json`)**: Live-syncs state to disk so you can inspect memory directly in your editor.
+
 ---
 
 ## 🗂️ Project Structure
@@ -45,19 +51,22 @@ agentic-workflow-trial/
 ├── agent/
 │   ├── __init__.py         # Package exports
 │   ├── config.py           # Configuration loader (.env, OPENAI_API_KEY, model)
-│   ├── tools.py            # ToolRegistry, @tool decorator, flight/travel tools
+│   ├── memory.py           # ShortTermMemory: sliding window, scratchpad, JSON persistence
+│   ├── tools.py            # ToolRegistry, @tool decorator, flight & memory tools
 │   ├── dag.py              # WorkflowDAG: step dependency and cycle management
 │   ├── llm_client.py       # Direct OpenAI API client with function calling
-│   └── core.py             # Agent class running the ReAct loop with DAG guard
+│   └── core.py             # Agent class running ReAct loop with memory & DAG guards
 ├── examples/
 │   ├── example_flight_search.py   # Flight search + baggage fare calculation
 │   ├── example_trip_planner.py    # Multi-step: flights + baggage + weather advice
 │   ├── example_human_in_loop.py   # Human-in-the-Loop verification & booking
-│   └── example_dag_workflow.py    # DAG dependency order enforcement
+│   ├── example_dag_workflow.py    # DAG dependency order enforcement
+│   └── example_short_term_memory.py # Short-term working memory & scratchpad
 ├── tests/
 │   ├── test_tools.py       # Unit tests for schemas and tool execution
 │   ├── test_dag.py         # Unit tests for Workflow DAG & cycle detection
-│   └── test_agent_dry_run.py # Unit tests for configuration and agent setup
+│   ├── test_agent_dry_run.py # Unit tests for configuration and agent setup
+│   └── test_memory.py      # Unit tests for ShortTermMemory & JSON persistence
 ├── interactive_cli.py      # Real-time interactive terminal chat with agent
 ├── .env.example            # Environment template
 └── README.md               # Educational guide
@@ -121,8 +130,22 @@ uv run example_dag_workflow.py
 python3 example_dag_workflow.py
 ```
 
+#### Example 5: Short-Term Working Memory & Scratchpad
+```bash
+uv run example_short_term_memory.py
+# or with active venv:
+python3 example_short_term_memory.py
+```
+
 #### Interactive Terminal Chat
-Chat with your travel agent live and watch it plan and call tools in real-time. Type `dag` to see current graph progress:
+Chat with your travel agent live and watch it plan and call tools in real-time.
+Commands:
+- `memory`: View active short-term memory capacity, sliding window, and scratchpad notes.
+- `notes`: Inspect saved working facts.
+- `set_var <key> <val>`: Manually pin a fact to working memory.
+- `dag`: See current Workflow DAG dependency progress.
+- `reset`: Clear memory, delete session file, and reset DAG.
+
 ```bash
 uv run interactive_cli.py
 # or with active venv:
@@ -140,6 +163,9 @@ python3 interactive_cli.py
 | `calculator` | Safely evaluate mathematical expressions for fares, fees, and taxes | `expression` |
 | `get_city_weather` | Check current conditions and travel packing recommendations | `city`, `date` |
 | `book_flight` | Book confirmed flight tickets once human verification is provided | `flight_number`, `passenger_name`, `date` |
+| `save_memory_note` | Save an important fact, preference, or constraint to working memory | `key`, `value` |
+| `recall_memory_notes` | Recall all verified facts and preferences in working memory | *(None)* |
+
 
 ---
 

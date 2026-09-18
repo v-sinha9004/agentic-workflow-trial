@@ -406,3 +406,54 @@ def book_flight(flight_number: str, passenger_name: str = "Passenger", date: str
     _MOCK_BOOKINGS.append(booking_record)
     return json.dumps(booking_record, indent=2)
 
+
+# =====================================================================
+# Short-Term Working Memory Tools
+# =====================================================================
+
+_ACTIVE_MEMORY: Optional[Any] = None
+
+
+def set_active_memory(memory: Any):
+    """Binds the current agent's ShortTermMemory instance to the tool execution context."""
+    global _ACTIVE_MEMORY
+    _ACTIVE_MEMORY = memory
+
+
+def get_active_memory() -> Optional[Any]:
+    """Returns the currently active ShortTermMemory instance."""
+    return _ACTIVE_MEMORY
+
+
+@tool(
+    name="save_memory_note",
+    description="Save an important fact, preference, or constraint to short-term working memory (e.g. passenger name, preferred airline, budget, baggage count).",
+)
+def save_memory_note(key: str, value: str) -> str:
+    """
+    Save a key-value fact into the agent's short-term working scratchpad.
+    :param key: Short descriptive key name (e.g. 'passenger_name', 'preferred_airline', 'trip_budget')
+    :param value: The fact or value to remember (e.g. 'Vishal', 'British Airways', '$500')
+    """
+    if _ACTIVE_MEMORY is not None:
+        _ACTIVE_MEMORY.set_note(key, value)
+        return f"Stored in working memory: {key} = '{value}'"
+    return f"Simulated memory save: {key} = '{value}'"
+
+
+@tool(
+    name="recall_memory_notes",
+    description="Recall all verified facts and user preferences stored in the short-term working scratchpad.",
+)
+def recall_memory_notes() -> str:
+    """
+    Retrieve all current working notes stored in memory.
+    """
+    if _ACTIVE_MEMORY is not None:
+        notes = _ACTIVE_MEMORY.get_all_notes()
+        if not notes:
+            return "Working memory scratchpad is currently empty."
+        return json.dumps(notes, indent=2)
+    return "No active working memory attached."
+
+
